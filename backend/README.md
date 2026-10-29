@@ -40,11 +40,26 @@ Access tokens last three hours. Refresh tokens last 30 days, are stored as
 SHA-256 hashes, and are rotated when refreshed. Logout revokes the active
 refresh token.
 
+Google and GitHub sign-in is brokered by the Next.js server. It forwards the
+provider access token to `POST /api/v1/auth/oauth/exchange`; Spring verifies
+the token with the provider's user-info API, requires a verified email, and
+stores the provider subject in `oauth_accounts`. The backend then issues its
+normal ChatApp JWT and refresh token. Provider identities are never trusted
+from browser-submitted profile data. An OAuth identity is not automatically
+linked to an existing password account by email.
+
 The API is stateless: protected requests carry the signed access token using
 the HTTP bearer-token authorization scheme instead of a server-side login
 session.
 Protected conversation and attachment operations also check the caller's
 membership; knowing a conversation ID alone does not grant access.
+
+Users may upload an optional profile image to `/api/v1/users/me/avatar`.
+Images are validated and stored using the same private local/R2 storage
+configuration as attachments. Other authenticated users can load the image
+through `/api/v1/users/{userId}/avatar`; profile responses include `avatarUrl`
+only when an image exists. Uploading a replacement or deleting the image removes
+the previous stored object.
 
 Room roles are scoped to a room, not global application roles. The creator is
 made an `ADMIN`; approved joiners and users who accept invitations become
@@ -78,9 +93,15 @@ Existing local files are not moved automatically when switching storage.
 
 - `/api/v1/room` (singular) creates one room; `/api/v1/rooms` (plural) lists
   group rooms and contains join-request routes.
-- Registration and login are public. Other HTTP API routes require a bearer
-  token, except Swagger, the root redirect, and CORS preflight requests.
+- Registration, login, OAuth exchange, and refresh are public. Other HTTP API
+  routes require a bearer token, except Swagger, the root redirect, and CORS
+  preflight requests. The OAuth exchange independently verifies provider
+  access tokens; refresh validates and rotates the supplied refresh token.
 - Invalid request bodies are validated at the API boundary.
+- Every API endpoint is reachable from frontend origins listed in
+  `CORS_ALLOWED_ORIGINS`; protected routes still require bearer authentication
+  and enforce their resource permissions. Do not use wildcard origins with
+  credentialed requests.
 - Message history is paginated, with a maximum page size of 100.
 - Duplicate direct conversations are avoided with a deterministic database key;
   message client IDs can make sending retries idempotent.
@@ -150,6 +171,8 @@ require an access token sent using the HTTP bearer-token authorization scheme.
 | `POST` | `/api/v1/auth/refresh` | Rotate refresh token and issue new tokens |
 | `POST` | `/api/v1/auth/logout` | Revoke refresh token |
 | `GET`, `PATCH` | `/api/v1/users/me` | Read or update the signed-in profile |
+| `POST`, `DELETE` | `/api/v1/users/me/avatar` | Upload or remove the signed-in user's profile image |
+| `GET` | `/api/v1/users/{userId}/avatar` | Read a user's optional profile image |
 | `GET` | `/api/v1/users?query=...` | Search for users |
 
 ### Conversations and messages
@@ -196,10 +219,16 @@ participants, messages, attachments, calls, join requests, and invitations.
 | `GET` | `/api/v1/attachments/{attachmentId}` | Download after membership verification |
 | `POST` | `/api/v1/conversations/{id}/calls` | Start a call |
 | `PATCH` | `/api/v1/conversations/{id}/calls/{callId}` | Update call state |
+| `GET` | `/api/v1/conversations/{id}/calls/{callId}/participants` | List call participants and join states |
+| `GET` | `/api/v1/calls/incoming` | List active direct calls and group-call invitations |
 
 Call signaling is sent over STOMP `/app/call/{conversationId}` and published to
 `/topic/call/{callId}`. Call events are published to
 `/topic/call-events/{conversationId}`.
+Direct conversations support one-to-one voice calls; group conversations support
+multi-member voice calls with individual invite and join states.
+The frontend checks the authenticated incoming-call endpoint and shows an
+answer/decline prompt; browser notifications require permission from the user.
 
 ## Dependencies and why they are used
 

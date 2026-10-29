@@ -11,6 +11,7 @@ import com.subspring.chatapp.backend.dto.JoinRoomDecisionRequest;
 import com.subspring.chatapp.backend.dto.RoomInvitationDecisionRequest;
 import com.subspring.chatapp.backend.dto.RoomSummary;
 import com.subspring.chatapp.backend.dto.RoomParticipantProfile;
+import com.subspring.chatapp.backend.dto.UserProfile;
 import com.subspring.chatapp.backend.dto.UpdateRoomParticipantRoleRequest;
 import com.subspring.chatapp.backend.entities.ConversationParticipant;
 import com.subspring.chatapp.backend.entities.ConversationParticipantId;
@@ -134,6 +135,7 @@ public class RoomController {
                                 user.getId(),
                                 user.getUsername(),
                                 user.getName(),
+                                UserProfile.avatarUrl(user),
                                 participant.getRole()
                         ))
                         .orElse(null))
@@ -180,6 +182,7 @@ public class RoomController {
                 user.getId(),
                 user.getUsername(),
                 user.getName(),
+                UserProfile.avatarUrl(user),
                 target.getRole()
         ));
     }

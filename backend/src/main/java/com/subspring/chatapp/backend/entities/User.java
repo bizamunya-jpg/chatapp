@@ -37,6 +37,12 @@ public class User {
     @Column(name = "name", columnDefinition = "text")
     private String name;
 
+    @Column(name = "avatar_storage_key", unique = true, columnDefinition = "text")
+    private String avatarStorageKey;
+
+    @Column(name = "avatar_mime_type", columnDefinition = "text")
+    private String avatarMimeType;
+
     @Column(name = "\"createdAt\"", nullable = false)
     private LocalDateTime createdAt;
 

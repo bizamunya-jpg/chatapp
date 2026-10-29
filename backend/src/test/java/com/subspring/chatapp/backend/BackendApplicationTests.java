@@ -7,6 +7,7 @@ import java.util.UUID;
 import com.subspring.chatapp.backend.entities.Room;
 import com.subspring.chatapp.backend.entities.Message;
 import com.subspring.chatapp.backend.repositories.MessageRepository;
+import com.subspring.chatapp.backend.repositories.OAuthAccountRepository;
 import com.subspring.chatapp.backend.repositories.ConversationParticipantRepository;
 import com.subspring.chatapp.backend.repositories.RoomRepository;
 import com.subspring.chatapp.backend.repositories.UserRepository;
@@ -14,6 +15,8 @@ import com.subspring.chatapp.backend.entities.ConversationParticipant;
 import com.subspring.chatapp.backend.entities.ConversationParticipantId;
 import com.subspring.chatapp.backend.entities.User;
 import com.subspring.chatapp.backend.services.RoomService;
+import com.subspring.chatapp.backend.services.OAuthIdentity;
+import com.subspring.chatapp.backend.services.OAuthProviderClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -22,6 +25,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -31,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -63,6 +68,12 @@ class BackendApplicationTests {
 	private UserRepository userRepository;
 
 	@Autowired
+	private OAuthAccountRepository oauthAccountRepository;
+
+	@MockitoBean
+	private OAuthProviderClient oauthProviderClient;
+
+	@Autowired
 	private MockMvc mockMvc;
 
 	@Autowired
@@ -70,6 +81,106 @@ class BackendApplicationTests {
 
 	@Test
 	void contextLoads() {
+	}
+
+	@Test
+	void authenticatedUserCanUploadViewAndRemoveProfileImage() throws Exception {
+		JsonNode account = registerAccount("avatar");
+		String userId = account.path("user").path("id").asText();
+		String accessToken = account.path("accessToken").asText();
+		MockMultipartFile image = new MockMultipartFile(
+				"file",
+				"profile.png",
+				"image/png",
+				new byte[] {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+		);
+
+		mockMvc.perform(multipart("/api/v1/users/me/avatar")
+						.file(image)
+						.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.avatarUrl").value(org.hamcrest.Matchers.containsString("/api/v1/users/" + userId + "/avatar")));
+		mockMvc.perform(get("/api/v1/users/{userId}/avatar", userId)
+						.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isOk())
+				.andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+						.contentTypeCompatibleWith(MediaType.IMAGE_PNG));
+		mockMvc.perform(delete("/api/v1/users/me/avatar")
+						.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isNoContent());
+		mockMvc.perform(get("/api/v1/users/{userId}/avatar", userId)
+						.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void oauthExchangeValidatesProviderIdentityAndIssuesChatAppTokens() throws Exception {
+		when(oauthProviderClient.verify("google", "verified-provider-token"))
+				.thenReturn(new OAuthIdentity(
+						"google",
+						"google-subject-123",
+						"oauth-user@example.com",
+						"OAuth User",
+						null
+				));
+
+		String firstResponse = mockMvc.perform(post("/api/v1/auth/oauth/exchange")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"provider":"google","accessToken":"verified-provider-token"}
+								"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.accessToken").isNotEmpty())
+				.andExpect(jsonPath("$.refreshToken").isNotEmpty())
+				.andExpect(jsonPath("$.user.email").value("oauth-user@example.com"))
+				.andReturn().getResponse().getContentAsString();
+		String userId = jsonMapper.readTree(firstResponse).path("user").path("id").asText();
+
+		String secondResponse = mockMvc.perform(post("/api/v1/auth/oauth/exchange")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"provider":"google","accessToken":"verified-provider-token"}
+								"""))
+				.andExpect(status().isOk())
+				.andReturn().getResponse().getContentAsString();
+
+		assertEquals(userId, jsonMapper.readTree(secondResponse).path("user").path("id").asText());
+		assertEquals(
+				userId,
+				oauthAccountRepository.findByProviderAndProviderSubject("google", "google-subject-123")
+						.orElseThrow()
+						.getUserId()
+		);
+	}
+
+	@Test
+	void oauthExchangeDoesNotSilentlyLinkAnExistingPasswordAccount() throws Exception {
+		User existingUser = new User();
+		existingUser.setUsername("oauth-existing-user");
+		existingUser.setEmail("existing-oauth@example.com");
+		existingUser.setPasswordHash("already-hashed");
+		userRepository.saveAndFlush(existingUser);
+		when(oauthProviderClient.verify("github", "verified-github-token"))
+				.thenReturn(new OAuthIdentity(
+						"github",
+						"github-subject-existing",
+						"existing-oauth@example.com",
+						"Existing User",
+						"existing-user"
+				));
+
+		mockMvc.perform(post("/api/v1/auth/oauth/exchange")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"provider":"github","accessToken":"verified-github-token"}
+								"""))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString(
+						"OAuth linking is not supported yet"
+				)));
+		assertFalse(oauthAccountRepository
+				.findByProviderAndProviderSubject("github", "github-subject-existing")
+				.isPresent());
 	}
 
 	@Test
@@ -349,12 +460,14 @@ class BackendApplicationTests {
 								""".formatted(username)))
 				.andExpect(status().isOk());
 
-		mockMvc.perform(post("/api/v1/auth/refresh")
+		String anonymousRefresh = mockMvc.perform(post("/api/v1/auth/refresh")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{"refreshToken":"%s"}
 								""".formatted(refreshToken)))
-				.andExpect(status().isUnauthorized());
+				.andExpect(status().isOk())
+				.andReturn().getResponse().getContentAsString();
+		String rotatedRefreshToken = jsonMapper.readTree(anonymousRefresh).get("refreshToken").asText();
 		mockMvc.perform(post("/api/v1/auth/logout")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
@@ -367,7 +480,7 @@ class BackendApplicationTests {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{"refreshToken":"%s"}
-								""".formatted(refreshToken)))
+								""".formatted(rotatedRefreshToken)))
 				.andExpect(status().isOk())
 				.andReturn().getResponse().getContentAsString();
 		JsonNode refreshedTokens = jsonMapper.readTree(refreshed);
@@ -418,6 +531,16 @@ class BackendApplicationTests {
 		assertFalse(conversation.has("directKey"));
 		String conversationId = conversation.get("id").asText();
 
+		mockMvc.perform(get("/api/v1/conversations/{id}/participants", conversationId)
+						.header("Authorization", "Bearer " + firstToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].username").isNotEmpty())
+				.andExpect(jsonPath("$[0].avatarUrl").value(org.hamcrest.Matchers.nullValue()))
+				.andExpect(jsonPath("$[1].username").isNotEmpty());
+		mockMvc.perform(get("/api/v1/conversations/{id}/participants", conversationId)
+						.header("Authorization", "Bearer " + outsiderToken))
+				.andExpect(status().isForbidden());
+
 		mockMvc.perform(post("/api/v1/conversations/{id}/messages", conversationId)
 						.header("Authorization", "Bearer " + firstToken)
 						.contentType(MediaType.APPLICATION_JSON)
@@ -436,6 +559,9 @@ class BackendApplicationTests {
 						.header("Authorization", "Bearer " + secondToken))
 				.andExpect(status().isOk());
 		mockMvc.perform(get("/api/v1/conversations/{id}/messages", conversationId)
+						.header("Authorization", "Bearer " + outsiderToken))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(get("/api/v1/conversations/{id}/calls", conversationId)
 						.header("Authorization", "Bearer " + outsiderToken))
 				.andExpect(status().isForbidden());
 
@@ -458,6 +584,21 @@ class BackendApplicationTests {
 				.andExpect(status().isCreated())
 				.andReturn().getResponse().getContentAsString();
 		String attachmentId = jsonMapper.readTree(attachmentResponse).get("id").asText();
+		String attachmentMessageId = jsonMapper.readTree(attachmentResponse).get("messageId").asText();
+		mockMvc.perform(get(
+						"/api/v1/conversations/{conversationId}/messages/{messageId}/attachment",
+						conversationId,
+						attachmentMessageId
+				).header("Authorization", "Bearer " + secondToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.id").value(attachmentId))
+				.andExpect(jsonPath("$.filename").value("notes.txt"));
+		mockMvc.perform(get(
+						"/api/v1/conversations/{conversationId}/messages/{messageId}/attachment",
+						conversationId,
+						attachmentMessageId
+				).header("Authorization", "Bearer " + outsiderToken))
+				.andExpect(status().isForbidden());
 		mockMvc.perform(get("/api/v1/attachments/{id}", attachmentId)
 						.header("Authorization", "Bearer " + secondToken))
 				.andExpect(status().isOk());
@@ -465,11 +606,27 @@ class BackendApplicationTests {
 						.header("Authorization", "Bearer " + outsiderToken))
 				.andExpect(status().isForbidden());
 
+		mockMvc.perform(get("/api/v1/conversations/{id}/calls", conversationId)
+						.header("Authorization", "Bearer " + secondToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$").isEmpty());
 		String callResponse = mockMvc.perform(post("/api/v1/conversations/{id}/calls", conversationId)
 						.header("Authorization", "Bearer " + firstToken))
 				.andExpect(status().isCreated())
 				.andReturn().getResponse().getContentAsString();
 		String callId = jsonMapper.readTree(callResponse).get("id").asText();
+		mockMvc.perform(get("/api/v1/calls/incoming")
+						.header("Authorization", "Bearer " + secondToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].id").value(callId));
+		mockMvc.perform(get("/api/v1/calls/incoming")
+						.header("Authorization", "Bearer " + firstToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$").isEmpty());
+		mockMvc.perform(get("/api/v1/conversations/{id}/calls", conversationId)
+						.header("Authorization", "Bearer " + secondToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].id").value(callId));
 		mockMvc.perform(patch("/api/v1/conversations/{conversationId}/calls/{callId}", conversationId, callId)
 						.header("Authorization", "Bearer " + secondToken)
 						.contentType(MediaType.APPLICATION_JSON)
@@ -477,6 +634,88 @@ class BackendApplicationTests {
 								{"status":"ACCEPTED"}
 								"""))
 				.andExpect(status().isOk());
+		mockMvc.perform(get("/api/v1/calls/incoming")
+								.header("Authorization", "Bearer " + secondToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].status").value("ACCEPTED"));
+	}
+
+	@Test
+	void groupVoiceCallsInviteAndTrackParticipantsIndividually() throws Exception {
+		JsonNode owner = registerAccount("groupcallowner");
+		JsonNode member = registerAccount("groupcallmember");
+		JsonNode outsider = registerAccount("groupcalloutsider");
+		String ownerToken = owner.get("accessToken").asText();
+		String memberToken = member.get("accessToken").asText();
+		String outsiderToken = outsider.get("accessToken").asText();
+		String roomName = "Group call room " + UUID.randomUUID();
+
+		String roomResponse = mockMvc.perform(post("/api/v1/room")
+						.header("Authorization", "Bearer " + ownerToken)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"roomname":"%s"}
+								""".formatted(roomName)))
+				.andExpect(status().isCreated())
+				.andReturn().getResponse().getContentAsString();
+		String roomId = jsonMapper.readTree(roomResponse).get("id").asText();
+		String joinRequestResponse = mockMvc.perform(post("/api/v1/rooms/{roomId}/join-requests", roomId)
+						.header("Authorization", "Bearer " + memberToken))
+				.andExpect(status().isCreated())
+				.andReturn().getResponse().getContentAsString();
+		String joinRequestId = jsonMapper.readTree(joinRequestResponse).get("id").asText();
+		mockMvc.perform(patch("/api/v1/room/{roomId}/join-requests/{requestId}", roomId, joinRequestId)
+						.header("Authorization", "Bearer " + ownerToken)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"approved":true}
+								"""))
+				.andExpect(status().isOk());
+
+		String callResponse = mockMvc.perform(post("/api/v1/conversations/{id}/calls", roomId)
+						.header("Authorization", "Bearer " + ownerToken))
+				.andExpect(status().isCreated())
+				.andReturn().getResponse().getContentAsString();
+		String callId = jsonMapper.readTree(callResponse).get("id").asText();
+		mockMvc.perform(get("/api/v1/calls/incoming")
+						.header("Authorization", "Bearer " + memberToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].id").value(callId));
+		mockMvc.perform(get("/api/v1/calls/incoming")
+						.header("Authorization", "Bearer " + ownerToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$").isEmpty());
+		mockMvc.perform(get("/api/v1/conversations/{id}/calls/{callId}/participants", roomId, callId)
+						.header("Authorization", "Bearer " + outsiderToken))
+				.andExpect(status().isForbidden());
+
+		mockMvc.perform(patch("/api/v1/conversations/{id}/calls/{callId}", roomId, callId)
+						.header("Authorization", "Bearer " + memberToken)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"status":"ACCEPTED"}
+								"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("ACCEPTED"));
+		String participantsResponse = mockMvc.perform(get(
+								"/api/v1/conversations/{id}/calls/{callId}/participants", roomId, callId)
+						.header("Authorization", "Bearer " + ownerToken))
+				.andExpect(status().isOk())
+				.andReturn().getResponse().getContentAsString();
+		assertTrue(participantsResponse.contains("\"status\":\"ACCEPTED\""));
+
+		mockMvc.perform(patch("/api/v1/conversations/{id}/calls/{callId}", roomId, callId)
+						.header("Authorization", "Bearer " + ownerToken)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"status":"ENDED"}
+								"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("ENDED"));
+		mockMvc.perform(get("/api/v1/conversations/{id}/calls", roomId)
+						.header("Authorization", "Bearer " + ownerToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$").isEmpty());
 	}
 
 	private JsonNode registerAccount(String prefix) throws Exception {
