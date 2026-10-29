@@ -107,6 +107,20 @@ public class AttachmentController {
                 .body(resource);
     }
 
+    @GetMapping("/conversations/{conversationId}/messages/{messageId}/attachment")
+    public ResponseEntity<AttachmentResponse> getMessageAttachment(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable String conversationId,
+            @PathVariable String messageId
+    ) {
+        requireMembership(conversationId, jwt.getSubject());
+        Message message = messageRepository.findByIdAndConversationId(messageId, conversationId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Message not found."));
+        Attachment attachment = attachmentRepository.findByMessageId(message.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Attachment not found."));
+        return ResponseEntity.ok(AttachmentResponse.from(attachment));
+    }
+
     private void requireMembership(String conversationId, String userId) {
         if (!roomRepository.existsById(conversationId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversation not found.");

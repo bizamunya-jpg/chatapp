@@ -1,0 +1,193 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String                    @id @default(cuid())
+  username      String?                   @unique
+  email         String                    @unique
+  passwordHash  String?                   @map("password_hash")
+  name          String?
+  avatarStorageKey String?                @unique @map("avatar_storage_key")
+  avatarMimeType String?                  @map("avatar_mime_type")
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  conversations ConversationParticipant[]
+  sentMessages  Message[]
+  refreshTokens RefreshToken[]
+  initiatedCalls Call[]                    @relation("CallInitiator")
+  receivedCalls  Call[]                    @relation("CallRecipient")
+  callParticipation CallParticipant[]
+  ownedConversations Conversation[]         @relation("ConversationOwner")
+  roomJoinRequests RoomJoinRequest[]
+  sentRoomInvitations RoomInvitation[]      @relation("RoomInvitationSender")
+  receivedRoomInvitations RoomInvitation[]  @relation("RoomInvitationRecipient")
+  oauthAccounts OAuthAccount[]
+}
+
+model OAuthAccount {
+  id              String   @id @default(cuid())
+  provider        String
+  providerSubject String   @map("provider_subject")
+  userId          String   @map("user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([provider, providerSubject])
+  @@index([userId])
+  @@map("oauth_accounts")
+}
+
+model Conversation {
+  id           String                    @id @default(cuid())
+  title        String?
+  type         String                    @default("GROUP")
+  directKey    String?                   @unique @map("direct_key")
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  ownerId      String?                   @map("owner_id")
+  owner        User?                     @relation("ConversationOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  participants ConversationParticipant[]
+  messages     Message[]
+  calls        Call[]
+  joinRequests RoomJoinRequest[]
+  invitations  RoomInvitation[]
+
+  @@index([updatedAt])
+  @@index([ownerId])
+}
+
+model RoomJoinRequest {
+  id         String       @id @db.Text
+  roomId     String       @map("room_id")
+  userId     String       @map("user_id")
+  status     String       @default("PENDING")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  resolvedAt DateTime?    @map("resolved_at")
+  room       Conversation @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, status, createdAt])
+  @@index([userId])
+  @@map("room_join_requests")
+}
+
+model RoomInvitation {
+  id         String       @id @db.Text
+  roomId     String       @map("room_id")
+  inviterId  String       @map("inviter_id")
+  inviteeId  String       @map("invitee_id")
+  status     String       @default("PENDING")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  resolvedAt DateTime?    @map("resolved_at")
+  room       Conversation @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  inviter    User         @relation("RoomInvitationSender", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee    User         @relation("RoomInvitationRecipient", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, status, createdAt])
+  @@index([inviteeId, status, createdAt])
+  @@map("room_invitations")
+}
+
+model ConversationTitleReservation {
+  title String @id @db.Text
+
+  @@map("conversation_title_reservations")
+}
+
+model ConversationParticipant {
+  conversationId String       @map("conversation_id")
+  userId         String       @map("user_id")
+  joinedAt       DateTime     @default(now()) @map("joined_at")
+  lastReadMessageId String?   @map("last_read_message_id")
+  role           String       @default("PARTICIPANT")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  clientMessageId String?     @map("client_message_id")
+  content        String?
+  type           String       @default("TEXT")
+  createdAt      DateTime     @default(now())
+  editedAt       DateTime?    @map("edited_at")
+  deletedAt      DateTime?    @map("deleted_at")
+  conversationId String       @map("conversation_id")
+  senderId       String       @map("sender_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Restrict)
+  attachments    Attachment[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@unique([conversationId, senderId, clientMessageId])
+  @@map("messages")
+}
+
+model Attachment {
+  id               String   @id @default(cuid())
+  messageId        String   @map("message_id")
+  storageKey       String   @unique @map("storage_key")
+  originalFilename String   @map("original_filename")
+  mimeType         String   @map("mime_type")
+  sizeBytes        BigInt   @map("size_bytes")
+  createdAt        DateTime @default(now()) @map("created_at")
+  message          Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("attachments")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Call {
+  id             String    @id @default(cuid())
+  conversationId String    @map("conversation_id")
+  initiatorId    String    @map("initiator_id")
+  recipientId    String    @map("recipient_id")
+  status         String    @default("RINGING")
+  startedAt      DateTime  @default(now()) @map("started_at")
+  endedAt        DateTime? @map("ended_at")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  initiator      User      @relation("CallInitiator", fields: [initiatorId], references: [id], onDelete: Restrict)
+  recipient      User      @relation("CallRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+  participants   CallParticipant[]
+
+  @@index([conversationId, status])
+  @@map("calls")
+}
+
+model CallParticipant {
+  callId   String   @map("call_id")
+  userId   String   @map("user_id")
+  status   String   @default("RINGING")
+  joinedAt DateTime @default(now()) @map("joined_at")
+  leftAt   DateTime? @map("left_at")
+  call     Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([callId, userId])
+  @@index([userId, status])
+  @@map("call_participants")
+}

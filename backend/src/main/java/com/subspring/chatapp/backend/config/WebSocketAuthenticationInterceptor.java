@@ -3,6 +3,7 @@ package com.subspring.chatapp.backend.config;
 import java.util.List;
 
 import com.subspring.chatapp.backend.repositories.CallRepository;
+import com.subspring.chatapp.backend.repositories.CallParticipantRepository;
 import com.subspring.chatapp.backend.repositories.ConversationParticipantRepository;
 import com.subspring.chatapp.backend.repositories.RoomRepository;
 import org.springframework.http.HttpHeaders;
@@ -27,17 +28,20 @@ public class WebSocketAuthenticationInterceptor implements ChannelInterceptor {
     private final ConversationParticipantRepository participantRepository;
     private final RoomRepository roomRepository;
     private final CallRepository callRepository;
+    private final CallParticipantRepository callParticipantRepository;
 
     public WebSocketAuthenticationInterceptor(
             JwtDecoder jwtDecoder,
             ConversationParticipantRepository participantRepository,
             RoomRepository roomRepository,
-            CallRepository callRepository
+            CallRepository callRepository,
+            CallParticipantRepository callParticipantRepository
     ) {
         this.jwtDecoder = jwtDecoder;
         this.participantRepository = participantRepository;
         this.roomRepository = roomRepository;
         this.callRepository = callRepository;
+        this.callParticipantRepository = callParticipantRepository;
     }
 
     @Override
@@ -103,7 +107,10 @@ public class WebSocketAuthenticationInterceptor implements ChannelInterceptor {
     private void requireCallParticipant(String callId, String userId) {
         var call = callRepository.findById(callId)
                 .orElseThrow(() -> new MessagingException("Call not found."));
-        if (!userId.equals(call.getInitiatorId()) && !userId.equals(call.getRecipientId())) {
+        boolean directParticipant = userId.equals(call.getInitiatorId()) || userId.equals(call.getRecipientId());
+        boolean acceptedGroupParticipant = callParticipantRepository
+                .existsByIdCallIdAndIdUserIdAndStatus(callId, userId, "ACCEPTED");
+        if (!directParticipant && !acceptedGroupParticipant) {
             throw new MessagingException("You do not have access to this call.");
         }
     }

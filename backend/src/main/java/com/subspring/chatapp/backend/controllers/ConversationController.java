@@ -9,6 +9,7 @@ import java.util.Map;
 import com.subspring.chatapp.backend.dto.CreateDirectConversationRequest;
 import com.subspring.chatapp.backend.dto.CreateMessageRequest;
 import com.subspring.chatapp.backend.dto.MarkReadRequest;
+import com.subspring.chatapp.backend.dto.RoomParticipantProfile;
 import com.subspring.chatapp.backend.dto.AddParticipantRequest;
 import com.subspring.chatapp.backend.dto.UpdateMessageRequest;
 import com.subspring.chatapp.backend.entities.ConversationParticipant;
@@ -73,6 +74,31 @@ public class ConversationController {
                 .map(participant -> participant.getId().getConversationId())
                 .toList();
         return roomRepository.findAllById(ids);
+    }
+
+    @GetMapping("/{conversationId}/participants")
+    public ResponseEntity<?> listParticipants(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable String conversationId
+    ) {
+        ResponseEntity<?> accessDenied = requireMembership(conversationId, jwt.getSubject());
+        if (accessDenied != null) {
+            return accessDenied;
+        }
+
+        List<RoomParticipantProfile> participants = participantRepository.findByIdConversationId(conversationId).stream()
+                .map(participant -> userRepository.findById(participant.getId().getUserId())
+                        .map(user -> new RoomParticipantProfile(
+                                user.getId(),
+                                user.getUsername(),
+                                user.getName(),
+                                com.subspring.chatapp.backend.dto.UserProfile.avatarUrl(user),
+                                participant.getRole()
+                        ))
+                        .orElse(null))
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        return ResponseEntity.ok(participants);
     }
 
     @PostMapping("/direct")

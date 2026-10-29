@@ -15,7 +15,9 @@ import com.subspring.chatapp.backend.dto.LoginRequest;
 import com.subspring.chatapp.backend.dto.RegisterRequest;
 import com.subspring.chatapp.backend.dto.UserProfile;
 import com.subspring.chatapp.backend.entities.RefreshToken;
+import com.subspring.chatapp.backend.entities.OAuthAccount;
 import com.subspring.chatapp.backend.entities.User;
+import com.subspring.chatapp.backend.repositories.OAuthAccountRepository;
 import com.subspring.chatapp.backend.repositories.RefreshTokenRepository;
 import com.subspring.chatapp.backend.repositories.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -35,6 +37,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class AuthService {
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final OAuthAccountRepository oauthAccountRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtEncoder jwtEncoder;
     private final Duration accessTokenTtl;
@@ -44,6 +47,7 @@ public class AuthService {
     public AuthService(
             UserRepository userRepository,
             RefreshTokenRepository refreshTokenRepository,
+            OAuthAccountRepository oauthAccountRepository,
             PasswordEncoder passwordEncoder,
             JwtEncoder jwtEncoder,
             Duration accessTokenTtl,
@@ -51,6 +55,7 @@ public class AuthService {
     ) {
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.oauthAccountRepository = oauthAccountRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtEncoder = jwtEncoder;
         this.accessTokenTtl = accessTokenTtl;
@@ -95,6 +100,40 @@ public class AuthService {
         if (user.getPasswordHash() == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new BadCredentialsException("Invalid login or password.");
         }
+        return issueTokens(user);
+    }
+
+    @Transactional
+    public AuthResponse loginWithOAuth(OAuthIdentity identity) {
+        OAuthAccount account = oauthAccountRepository
+                .findByProviderAndProviderSubject(identity.provider(), identity.subject())
+                .orElse(null);
+
+        User user;
+        if (account != null) {
+            user = userRepository.findById(account.getUserId())
+                    .orElseThrow(() -> new IllegalStateException("OAuth account references a missing user."));
+        } else {
+            if (userRepository.findByEmailIgnoreCase(identity.email()).isPresent()) {
+                throw new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "This email already belongs to an account. Sign in with that account; OAuth linking is not supported yet."
+                );
+            }
+
+            user = new User();
+            user.setUsername(newOAuthUsername(identity));
+            user.setEmail(identity.email().trim().toLowerCase(Locale.ROOT));
+            user.setName(identity.displayName());
+            user = userRepository.saveAndFlush(user);
+
+            OAuthAccount newAccount = new OAuthAccount();
+            newAccount.setProvider(identity.provider());
+            newAccount.setProviderSubject(identity.subject());
+            newAccount.setUserId(user.getId());
+            oauthAccountRepository.save(newAccount);
+        }
+
         return issueTokens(user);
     }
 
@@ -156,6 +195,25 @@ public class AuthService {
         byte[] tokenBytes = new byte[64];
         secureRandom.nextBytes(tokenBytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
+    }
+
+    private String newOAuthUsername(OAuthIdentity identity) {
+        String source = identity.username();
+        if (source == null || source.isBlank()) {
+            source = identity.email().substring(0, identity.email().indexOf('@'));
+        }
+        String base = source.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_.-]", "");
+        if (base.length() < 3) {
+            base = "user";
+        }
+        base = base.substring(0, Math.min(base.length(), 21));
+
+        String username;
+        do {
+            String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+            username = base + "_" + suffix;
+        } while (userRepository.existsByUsernameIgnoreCase(username));
+        return username;
     }
 
     private String hashToken(String token) {

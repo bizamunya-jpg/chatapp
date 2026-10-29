@@ -2,9 +2,11 @@ package com.subspring.chatapp.backend.controllers;
 
 import com.subspring.chatapp.backend.dto.AuthResponse;
 import com.subspring.chatapp.backend.dto.LoginRequest;
+import com.subspring.chatapp.backend.dto.OAuthExchangeRequest;
 import com.subspring.chatapp.backend.dto.RefreshRequest;
 import com.subspring.chatapp.backend.dto.RegisterRequest;
 import com.subspring.chatapp.backend.services.AuthService;
+import com.subspring.chatapp.backend.services.OAuthProviderClient;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
 
@@ -23,9 +26,11 @@ import java.util.Map;
 @RequestMapping("/api/v1/auth")
 public class AuthController {
     private final AuthService authService;
+    private final OAuthProviderClient oauthProviderClient;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, OAuthProviderClient oauthProviderClient) {
         this.authService = authService;
+        this.oauthProviderClient = oauthProviderClient;
     }
 
     @PostMapping("/register")
@@ -36,6 +41,13 @@ public class AuthController {
     @PostMapping("/login")
     public AuthResponse login(@Valid @RequestBody LoginRequest request) {
         return authService.login(request);
+    }
+
+    @PostMapping("/oauth/exchange")
+    public AuthResponse oauthExchange(@Valid @RequestBody OAuthExchangeRequest request) {
+        return authService.loginWithOAuth(
+                oauthProviderClient.verify(request.provider(), request.accessToken())
+        );
     }
 
     @PostMapping("/refresh")
@@ -58,6 +70,14 @@ public class AuthController {
     public ResponseEntity<Map<String, String>> duplicateAccount() {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("error", "Username or email is already in use."));
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, String>> requestFailure(ResponseStatusException exception) {
+        String message = exception.getReason() == null
+                ? "The authentication request could not be completed."
+                : exception.getReason();
+        return ResponseEntity.status(exception.getStatusCode()).body(Map.of("error", message));
     }
 
     @ExceptionHandler(BadCredentialsException.class)
