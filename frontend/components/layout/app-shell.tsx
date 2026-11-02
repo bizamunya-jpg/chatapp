@@ -1,6 +1,6 @@
 "use client";
 
-import { ImagePlus, Menu, MessageCircle, Plus, RefreshCw, Search, Trash2, Users, X } from "lucide-react";
+import { ImagePlus, LogOut, Menu, MessageCircle, Plus, RefreshCw, Search, Trash2, Users, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEv
 import { ProfileAvatar } from "@/components/profile/profile-avatar";
 import { IncomingCallNotifications } from "@/components/conversations/incoming-call-notifications";
 import { Input } from "@/components/ui/input";
-import { getAccessToken } from "@/lib/auth-token";
+import { clearLegacyTokenStorage, hasSession } from "@/lib/session-state";
 import { backendApi } from "@/lib/backend-api";
 import type { Conversation, RoomParticipant, RoomSummary, PublicUserProfile, UserProfile } from "@/lib/backend-types";
 import { ProfileImageSchema, UserSearchSchema } from "@/lib/page-schemas";
@@ -49,7 +49,7 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
       setConversations(conversationList);
       setConversationParticipants(Object.fromEntries(participantEntries));
       setRooms(roomList);
-      if (getAccessToken()) setProfile(await backendApi.users.me());
+      if (hasSession()) setProfile(await backendApi.users.me());
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load your sidebar.");
     } finally {
@@ -58,8 +58,12 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
   }, []);
 
   useEffect(() => {
+    clearLegacyTokenStorage();
+  }, []);
+
+  useEffect(() => {
     if (pathname.startsWith("/auth/")) return;
-    if (!getAccessToken()) {
+    if (!hasSession()) {
       void Promise.resolve().then(() => setIsLoading(false));
       return;
     }
@@ -153,6 +157,18 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
       setProfile((current) => current ? { ...current, avatarUrl: null } : current);
     } catch (removeError) {
       setError(removeError instanceof Error ? removeError.message : "The profile image could not be removed.");
+    }
+  }
+
+  async function logOut() {
+    try {
+      setError("");
+      await backendApi.auth.logout();
+      // A full page load also closes realtime connections and clears loaded data.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign("/auth/login");
+    } catch (logoutError) {
+      setError(logoutError instanceof Error ? logoutError.message : "Could not log out.");
     }
   }
 
@@ -401,6 +417,16 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
           )}
         </div>
       )}
+      <div className="shrink-0 border-t border-white/10 p-3">
+        <button
+          type="button"
+          onClick={() => void logOut()}
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm text-zinc-300 transition hover:bg-white/10 hover:text-white"
+        >
+          <LogOut className="size-4" />
+          Log out
+        </button>
+      </div>
     </aside>
   );
 

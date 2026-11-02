@@ -8,10 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProfileAvatar } from "@/components/profile/profile-avatar";
 import { BackendApiError } from "@/lib/api-client";
-import { getAccessToken } from "@/lib/auth-token";
+import { hasSession } from "@/lib/session-state";
 import { backendApi } from "@/lib/backend-api";
 import type { RoomJoinRequest, RoomParticipant, RoomSummary } from "@/lib/backend-types";
-import { getBackendBaseUrl } from "@/lib/backend-url";
 import { CreateRoomSchema } from "@/lib/page-schemas";
 import { notifyRoomsChanged } from "@/lib/room-events";
 
@@ -24,7 +23,7 @@ const SKELETON_CARD_COUNT = 80;
 
 function messageFrom(error: unknown): string {
     if (error instanceof TypeError) {
-        return `Cannot reach the backend at ${getBackendBaseUrl()}. Confirm Spring Boot is running and BACKEND_URL points to its address.`;
+        return "Cannot reach the server. Check your connection and try again.";
     }
     return error instanceof Error ? error.message : "The request could not be completed.";
 }
@@ -168,7 +167,7 @@ function RoomsPageContent() {
 
     const handleLoadError = useCallback((loadError: unknown) => {
         // A failed token refresh clears the session, so there is nothing left to retry.
-        if (!getAccessToken()) {
+        if (!hasSession()) {
             router.replace("/auth/login");
             return;
         }
@@ -176,7 +175,7 @@ function RoomsPageContent() {
     }, [router]);
 
     useEffect(() => {
-        if (!getAccessToken()) {
+        if (!hasSession()) {
             router.replace("/auth/login");
             return;
         }

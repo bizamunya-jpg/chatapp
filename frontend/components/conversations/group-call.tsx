@@ -41,6 +41,7 @@ export function GroupCall({ conversationId }: Props) {
   const signalSubscriptionRef = useRef<StompSubscription | null>(null);
   const peersRef = useRef(new Map<string, RTCPeerConnection>());
   const localStreamRef = useRef<MediaStream | null>(null);
+  const iceServersRef = useRef<RTCIceServer[]>([]);
   const currentUserIdRef = useRef("");
   const callRef = useRef<Call | null>(null);
   const pendingSignalsRef = useRef(new Map<string, z.infer<typeof GroupCallSignalSchema>[]>());
@@ -94,9 +95,7 @@ export function GroupCall({ conversationId }: Props) {
     const stream = localStreamRef.current;
     if (!stream) return null;
 
-    const peer = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-    });
+    const peer = new RTCPeerConnection({ iceServers: iceServersRef.current });
     peersRef.current.set(remoteUserId, peer);
     stream.getTracks().forEach((track) => peer.addTrack(track, stream));
     peer.ontrack = (event) => {
@@ -219,7 +218,7 @@ export function GroupCall({ conversationId }: Props) {
         if (!active) return;
         client = new Client({
           brokerURL: options.brokerURL,
-          connectHeaders: options.connectHeaders,
+          beforeConnect: options.beforeConnect,
           reconnectDelay: options.reconnectDelay,
           onConnect: () => {
             setIsConnected(true);
@@ -293,6 +292,8 @@ export function GroupCall({ conversationId }: Props) {
     void (async () => {
       try {
         if (!localStreamRef.current) {
+          // createPeer only runs once the local stream is set, so load these first.
+          iceServersRef.current = await backendApi.realtime.iceServers();
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
           if (!active) {
             stream.getTracks().forEach((track) => track.stop());

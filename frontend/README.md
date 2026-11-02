@@ -2,9 +2,10 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Connecting the frontend to the backend
 
-The browser calls the Spring Boot API through `lib/backend-api.ts`. The API
-client adds the configured backend base URL, bearer authorization, JSON
-handling, and refresh-token rotation. Copy `.env.example` to `.env.local` and
+The browser calls the Spring Boot API through `lib/backend-api.ts`, which sends
+requests to the server-only proxy at `/api/backend`. The proxy adds the bearer
+token from the encrypted session cookie, and `/api/session` handles login, logout,
+and refresh-token rotation. Copy `.env.example` to `.env.local` and
 set `BACKEND_URL` to the reachable backend origin:
 
 ```env
@@ -23,7 +24,7 @@ After the provider redirects back, the frontend server sends the provider
 access token directly to Spring. Spring validates it against the provider,
 persists the verified provider identity, and returns ChatApp's own access and
 refresh tokens. Provider tokens and OAuth client secrets are never sent to the
-browser. Protected chat API calls continue to use ChatApp bearer tokens.
+browser. Protected chat API calls use ChatApp bearer tokens, attached on the server.
 
 Set these variables in the private `frontend/.env.local` file (see
 `.env.example`):
@@ -56,12 +57,12 @@ conversation, room, attachment, and call HTTP operations. For example:
 ```ts
 import { backendApi } from "@/lib/backend-api";
 
-const session = await backendApi.auth.login({ username, password });
+await backendApi.auth.login({ username, password });
 const rooms = await backendApi.rooms.list();
 ```
 
-API calls for protected resources automatically include the ChatApp bearer
-token and refresh it when needed. Calls and attachment downloads are restricted
+API calls for protected resources go through the server-side proxy, which adds
+the ChatApp bearer token. It is refreshed when needed. Calls and attachment downloads are restricted
 by the backend to conversation participants. Selecting a conversation opens a
 popup with quick call and file controls plus links to the dedicated Calls and
 Attachments pages. Incoming calls appear as an in-app answer/decline dialog;
@@ -74,8 +75,8 @@ remain blank.
 Configure the backend's `CORS_ALLOWED_ORIGINS` with the frontend's exact
 deployed origin as well as local development origins.
 
-Access and refresh tokens are held in browser `sessionStorage` and cleared when
-logout completes. Do not put backend secrets, database URLs, or R2 credentials
+Access and refresh tokens are held in an encrypted `httpOnly` cookie that browser
+JavaScript cannot read, and are cleared when logout completes. Do not put backend secrets, database URLs, or R2 credentials
 in `NEXT_PUBLIC_*` variables. The frontend connects to the API; it should not
 use Prisma as a browser-side database client.
 
@@ -175,29 +176,26 @@ JSON request to `/app/sendMessage/{roomId-or-name}`:
 }
 ```
 
-## Access-token storage
+## Token storage
 
-The backend returns an access JWT from registration and login. In browser-side
-code, use [`lib/auth-token.ts`](./lib/auth-token.ts) to store it in
-`sessionStorage`:
+The browser never receives the access or refresh token. `lib/server-session.ts`
+(server-only) encrypts them with a key derived from `NEXTAUTH_SECRET` into the
+`httpOnly`, `SameSite=Lax` `chatapp.session` cookie, which is also `Secure` in
+production. The readable `chatapp.session-expires` cookie holds only the access
+token's expiry time, so `lib/session-state.ts` can tell whether a session exists.
 
-```ts
-import { storeAccessToken, getAccessToken, clearAccessToken } from "@/lib/auth-token";
+Use `lib/backend-api.ts` for protected calls. Auth endpoints are blocked by the
+`/api/backend` proxy because they return tokens; use `/api/session` instead.
+WebSockets connect with a single-use, 60-second ticket from
+`/api/session/ws-ticket`.
 
-storeAccessToken(authResponse.accessToken);
-const token = getAccessToken();
-clearAccessToken();
-```
+## Call relay
 
-Use [`lib/api-client.ts`](./lib/api-client.ts) for protected backend calls; it
-adds the stored token as `Authorization: Bearer <token>` and throws if no token
-has been saved. Registration and login are public and should use `fetch`
-directly, then save the returned `accessToken` with `storeAccessToken`.
-
-`sessionStorage` is scoped to the current browser tab and is cleared when that
-tab closes. It is accessible to JavaScript running on the page, so protect the
-app against cross-site scripting; for higher-security deployments, prefer
-server-managed `HttpOnly`, `Secure`, `SameSite` cookies.
+Calls use ExpressTURN when a direct connection is not possible. Set `TURN_URLS`
+(comma-separated), `TURN_USERNAME` and `TURN_PASSWORD` on the server. Signed-in
+users receive them from `/api/session/ice-servers`, because the browser needs
+them to open a relay. Unlike session tokens, these credentials are visible to
+signed-in users, so rotate them in the ExpressTURN dashboard if they are abused.
 
 ## Getting Started
 

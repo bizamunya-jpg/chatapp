@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { backendApi } from "@/lib/backend-api";
-import { getAccessToken } from "@/lib/auth-token";
+import { hasSession } from "@/lib/session-state";
 import type { Call } from "@/lib/backend-types";
 
 function messageFrom(error: unknown): string {
@@ -23,7 +23,7 @@ export function IncomingCallNotifications() {
   const notifiedCallIdsRef = useRef(new Set<string>());
 
   const refreshIncomingCalls = useCallback(async () => {
-    if (!getAccessToken()) return;
+    if (!hasSession()) return;
     const calls = await backendApi.calls.listIncoming();
     setIncomingCalls(calls);
     for (const call of calls) {
@@ -45,7 +45,7 @@ export function IncomingCallNotifications() {
   }, [router]);
 
   useEffect(() => {
-    if (!getAccessToken()) return;
+    if (!hasSession()) return;
     let active = true;
     const refresh = () => {
       void refreshIncomingCalls().catch((loadError: unknown) => {

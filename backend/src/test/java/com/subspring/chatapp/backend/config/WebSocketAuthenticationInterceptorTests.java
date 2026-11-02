@@ -4,6 +4,7 @@ import com.subspring.chatapp.backend.repositories.CallParticipantRepository;
 import com.subspring.chatapp.backend.repositories.CallRepository;
 import com.subspring.chatapp.backend.repositories.ConversationParticipantRepository;
 import com.subspring.chatapp.backend.repositories.RoomRepository;
+import com.subspring.chatapp.backend.services.WebSocketTicketService;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -36,7 +37,8 @@ class WebSocketAuthenticationInterceptorTests {
                 mock(ConversationParticipantRepository.class),
                 mock(RoomRepository.class),
                 mock(CallRepository.class),
-                mock(CallParticipantRepository.class)
+                mock(CallParticipantRepository.class),
+                new WebSocketTicketService()
         );
         StompHeaderAccessor headers = StompHeaderAccessor.create(StompCommand.CONNECT);
         headers.addNativeHeader("Authorization", "Bearer valid-token");
@@ -59,7 +61,8 @@ class WebSocketAuthenticationInterceptorTests {
                 mock(ConversationParticipantRepository.class),
                 mock(RoomRepository.class),
                 mock(CallRepository.class),
-                mock(CallParticipantRepository.class)
+                mock(CallParticipantRepository.class),
+                new WebSocketTicketService()
         );
         StompHeaderAccessor headers = StompHeaderAccessor.create(StompCommand.CONNECT);
         headers.setLeaveMutable(true);
@@ -69,5 +72,42 @@ class WebSocketAuthenticationInterceptorTests {
                 MessagingException.class,
                 () -> interceptor.preSend(message, mock(MessageChannel.class))
         );
+    }
+
+    @Test
+    void ticketAuthenticatesConnectOnlyOnce() {
+        Jwt jwt = Jwt.withTokenValue("valid-token")
+                .header("alg", "HS256")
+                .subject("user-1")
+                .build();
+        WebSocketTicketService ticketService = new WebSocketTicketService();
+        String ticket = ticketService.issue(jwt);
+        WebSocketAuthenticationInterceptor interceptor = new WebSocketAuthenticationInterceptor(
+                mock(JwtDecoder.class),
+                mock(ConversationParticipantRepository.class),
+                mock(RoomRepository.class),
+                mock(CallRepository.class),
+                mock(CallParticipantRepository.class),
+                ticketService
+        );
+
+        Message<?> authenticated = interceptor.preSend(connectWithTicket(ticket), mock(MessageChannel.class));
+        StompHeaderAccessor authenticatedHeaders = MessageHeaderAccessor.getAccessor(
+                authenticated,
+                StompHeaderAccessor.class
+        );
+
+        assertEquals("user-1", authenticatedHeaders.getUser().getName());
+        assertThrows(
+                MessagingException.class,
+                () -> interceptor.preSend(connectWithTicket(ticket), mock(MessageChannel.class))
+        );
+    }
+
+    private Message<byte[]> connectWithTicket(String ticket) {
+        StompHeaderAccessor headers = StompHeaderAccessor.create(StompCommand.CONNECT);
+        headers.addNativeHeader("ws-ticket", ticket);
+        headers.setLeaveMutable(true);
+        return MessageBuilder.createMessage(new byte[0], headers.getMessageHeaders());
     }
 }

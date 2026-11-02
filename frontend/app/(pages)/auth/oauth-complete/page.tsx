@@ -5,9 +5,6 @@ import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { useEffect, useRef, useState } from "react";
 
-import { AuthResponseSchema } from "@/lib/auth-schemas";
-import { storeAuthTokens } from "@/lib/auth-token";
-
 export default function OAuthCompletePage() {
   const router = useRouter();
   const started = useRef(false);
@@ -36,12 +33,7 @@ export default function OAuthCompletePage() {
           throw new Error(errorMessage);
         }
 
-        const parsedResponse = AuthResponseSchema.safeParse(body);
-        if (!parsedResponse.success) {
-          throw new Error("The backend returned an invalid sign-in response.");
-        }
         await signOut({ redirect: false });
-        storeAuthTokens(parsedResponse.data);
         router.replace("/");
       } catch (exchangeError) {
         setError(

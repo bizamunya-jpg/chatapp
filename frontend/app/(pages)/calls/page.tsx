@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { DirectCall } from "@/components/conversations/direct-call";
 import { GroupCall } from "@/components/conversations/group-call";
 import { backendApi } from "@/lib/backend-api";
-import { getAccessToken } from "@/lib/auth-token";
+import { hasSession } from "@/lib/session-state";
 import type { Conversation } from "@/lib/backend-types";
 
 function CallsPageContent() {
@@ -19,7 +19,7 @@ function CallsPageContent() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!getAccessToken()) {
+    if (!hasSession()) {
       router.replace("/auth/login");
       return;
     }
@@ -40,7 +40,7 @@ function CallsPageContent() {
   }, [requestedId, router]);
 
   useEffect(() => {
-    if (!getAccessToken()) return;
+    if (!hasSession()) return;
     let active = true;
     const refreshIncomingCalls = () => {
       void backendApi.calls.listIncoming()
