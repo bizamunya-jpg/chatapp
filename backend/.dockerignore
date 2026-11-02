@@ -1,0 +1,5 @@
+.env
+.run
+.idea
+target
+private-uploads
