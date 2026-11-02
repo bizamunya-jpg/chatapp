@@ -5,13 +5,14 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 The browser calls the Spring Boot API through `lib/backend-api.ts`. The API
 client adds the configured backend base URL, bearer authorization, JSON
 handling, and refresh-token rotation. Copy `.env.example` to `.env.local` and
-set `NEXT_PUBLIC_BACKEND_URL` to the reachable backend origin:
+set `BACKEND_URL` to the reachable backend origin:
 
 ```env
-NEXT_PUBLIC_BACKEND_URL=http://localhost:8080
+BACKEND_URL=http://localhost:8080
 ```
 
-Restart `npm run dev` after changing the environment file. For a deployed
+Restart `npm run dev` after changing the environment file. `BACKEND_URL` is
+built into the frontend, so a deployed frontend must be rebuilt after changing it. For a deployed
 frontend, use the public HTTPS origin of the deployed backend. The backend's
 `CORS_ALLOWED_ORIGINS` must allow the frontend's origin.
 
