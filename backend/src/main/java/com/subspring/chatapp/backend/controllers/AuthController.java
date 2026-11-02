@@ -7,10 +7,13 @@ import com.subspring.chatapp.backend.dto.RefreshRequest;
 import com.subspring.chatapp.backend.dto.RegisterRequest;
 import com.subspring.chatapp.backend.services.AuthService;
 import com.subspring.chatapp.backend.services.OAuthProviderClient;
+import com.subspring.chatapp.backend.services.WebSocketTicketService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -27,10 +30,16 @@ import java.util.Map;
 public class AuthController {
     private final AuthService authService;
     private final OAuthProviderClient oauthProviderClient;
+    private final WebSocketTicketService webSocketTicketService;
 
-    public AuthController(AuthService authService, OAuthProviderClient oauthProviderClient) {
+    public AuthController(
+            AuthService authService,
+            OAuthProviderClient oauthProviderClient,
+            WebSocketTicketService webSocketTicketService
+    ) {
         this.authService = authService;
         this.oauthProviderClient = oauthProviderClient;
+        this.webSocketTicketService = webSocketTicketService;
     }
 
     @PostMapping("/register")
@@ -59,6 +68,11 @@ public class AuthController {
     public ResponseEntity<Void> logout(@Valid @RequestBody RefreshRequest request) {
         authService.logout(request.refreshToken());
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/ws-ticket")
+    public Map<String, String> webSocketTicket(@AuthenticationPrincipal Jwt jwt) {
+        return Map.of("ticket", webSocketTicketService.issue(jwt));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -11,7 +11,7 @@ import { GroupCall } from "@/components/conversations/group-call";
 import { ProfileAvatar } from "@/components/profile/profile-avatar";
 import { Input } from "@/components/ui/input";
 import { BackendApiError } from "@/lib/api-client";
-import { getAccessToken } from "@/lib/auth-token";
+import { hasSession } from "@/lib/session-state";
 import { backendApi } from "@/lib/backend-api";
 import type { Attachment, Conversation, Message, PublicUserProfile, RoomParticipant } from "@/lib/backend-types";
 import { AttachmentFileSchema, MessageInputSchema, UserSearchSchema } from "@/lib/page-schemas";
@@ -74,7 +74,7 @@ function ConversationsPageContent() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!getAccessToken()) {
+    if (!hasSession()) {
       router.replace("/auth/login");
       return;
     }

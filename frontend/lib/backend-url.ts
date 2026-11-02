@@ -1,3 +1,5 @@
+import "server-only";
+
 export function getBackendBaseUrl(): string {
   const configuredUrl = process.env.BACKEND_URL;
   if (!configuredUrl) {

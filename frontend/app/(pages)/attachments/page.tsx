@@ -8,7 +8,7 @@ import { useRef } from "react";
 
 import { backendApi } from "@/lib/backend-api";
 import { BackendApiError } from "@/lib/api-client";
-import { getAccessToken } from "@/lib/auth-token";
+import { hasSession } from "@/lib/session-state";
 import type { Attachment, Conversation, Message } from "@/lib/backend-types";
 
 type ConversationFiles = {
@@ -29,7 +29,7 @@ function AttachmentsPageContent() {
   const conversationPickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!getAccessToken()) {
+    if (!hasSession()) {
       router.replace("/auth/login");
       return;
     }

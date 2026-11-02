@@ -1,20 +1,9 @@
-import {
-  clearAuthTokens,
-  getAccessToken,
-  getAccessTokenExpiresAt,
-  getRefreshToken,
-  storeAuthTokens,
-} from "@/lib/auth-token";
-import { getBackendBaseUrl } from "@/lib/backend-url";
+import { getSessionExpiresAt } from "@/lib/session-state";
 
 const REFRESH_BEFORE_EXPIRY_MS = 30_000;
-
-export type BackendAuthTokens = {
-  accessToken: string;
-  refreshToken: string;
-  tokenType: "Bearer" | string;
-  accessTokenExpiresAt: string;
-};
+const REFRESH_LOCK_NAME = "chatapp.session-refresh";
+const BACKEND_API_PREFIX = "/api/v1/";
+const BACKEND_PROXY_PREFIX = "/api/backend/";
 
 export class BackendApiError extends Error {
   constructor(
@@ -27,54 +16,14 @@ export class BackendApiError extends Error {
   }
 }
 
-let refreshInProgress: Promise<BackendAuthTokens> | null = null;
+let refreshInProgress: Promise<void> | null = null;
 
-export function backendUrl(path: string): URL {
-  return new URL(path.replace(/^\/+/, ""), `${getBackendBaseUrl()}/`);
-}
-
-export function getBackendWebSocketUrl(): string {
-  const url = backendUrl("/ws");
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return url.toString();
-}
-
-function isRequest(input: RequestInfo | URL): input is Request {
-  return typeof Request !== "undefined" && input instanceof Request;
-}
-
-function resolveUrl(input: RequestInfo | URL): URL {
-  if (input instanceof URL) return input;
-  if (isRequest(input)) return new URL(input.url);
-  return new URL(input, `${getBackendBaseUrl()}/`);
-}
-
-function makeRequest(
-  input: RequestInfo | URL,
-  init: RequestInit,
-  token?: string,
-): { url: URL; init: RequestInit } {
-  const url = resolveUrl(input);
-  const headers = new Headers(isRequest(input) ? input.headers : undefined);
-  new Headers(init.headers).forEach((value, key) => headers.set(key, value));
-  headers.set("Accept", "application/json");
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-
-  return {
-    url,
-    init: {
-      ...init,
-      headers,
-    },
-  };
-}
-
-export async function backendFetch(
-  input: RequestInfo | URL,
-  init: RequestInit = {},
-): Promise<Response> {
-  const request = makeRequest(input, init);
-  return fetch(request.url, request.init);
+function proxyUrl(path: string): string {
+  const url = new URL(path, window.location.origin);
+  if (!url.pathname.startsWith(BACKEND_API_PREFIX)) {
+    throw new Error("The requested backend path is not allowed.");
+  }
+  return `${BACKEND_PROXY_PREFIX}${url.pathname.slice(BACKEND_API_PREFIX.length)}${url.search}`;
 }
 
 async function decodeError(response: Response): Promise<BackendApiError> {
@@ -108,81 +57,66 @@ export async function expectBackendJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function doRefresh(): Promise<BackendAuthTokens> {
-  const accessToken = getAccessToken();
-  const refreshToken = getRefreshToken();
-  if (!accessToken || !refreshToken) {
-    clearAuthTokens();
-    throw new Error("Your session has expired. Please log in again.");
-  }
+async function doRefresh(seenExpiresAt: number | null): Promise<void> {
+  // Another tab may have rotated the tokens while this one waited for the lock.
+  const currentExpiresAt = getSessionExpiresAt();
+  if (currentExpiresAt !== null && currentExpiresAt !== seenExpiresAt) return;
 
-  const response = await fetch(backendUrl("/api/v1/auth/refresh"), {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ refreshToken }),
-  });
-  if (!response.ok) {
-    clearAuthTokens();
-    throw await decodeError(response);
-  }
-
-  const tokens = (await response.json()) as BackendAuthTokens;
-  try {
-    storeAuthTokens(tokens);
-  } catch (error) {
-    clearAuthTokens();
-    throw error;
-  }
-  return tokens;
+  await expectBackendSuccess(await fetch("/api/session/refresh", { method: "POST" }));
 }
 
-export async function refreshBackendSession(): Promise<BackendAuthTokens> {
+function refreshBackendSession(seenExpiresAt: number | null): Promise<void> {
   if (!refreshInProgress) {
-    refreshInProgress = doRefresh().finally(() => {
+    const refresh = () => doRefresh(seenExpiresAt);
+    // Refresh tokens are single-use, so only one tab may rotate them at a time.
+    const pending: Promise<void> = navigator.locks
+      ? navigator.locks.request(REFRESH_LOCK_NAME, refresh).then(() => undefined)
+      : refresh();
+    const current = pending.finally(() => {
       refreshInProgress = null;
     });
+    refreshInProgress = current;
+    return current;
   }
   return refreshInProgress;
 }
 
-async function currentAccessToken(): Promise<string> {
-  let token = getAccessToken();
-  if (!token) {
-    throw new Error("An access token is required. Please log in first.");
+async function ensureFreshSession(): Promise<void> {
+  const expiresAt = getSessionExpiresAt();
+  if (expiresAt === null) {
+    throw new Error("Your session has expired. Please log in again.");
   }
-
-  const expiresAt = getAccessTokenExpiresAt();
-  if (expiresAt !== null && expiresAt <= Date.now() + REFRESH_BEFORE_EXPIRY_MS) {
-    token = (await refreshBackendSession()).accessToken;
+  if (expiresAt <= Date.now() + REFRESH_BEFORE_EXPIRY_MS) {
+    await refreshBackendSession(expiresAt);
   }
-  return token;
 }
 
-export async function getAuthenticatedAccessToken(): Promise<string> {
-  return currentAccessToken();
+// Sends a request through the server-side proxy, which attaches the access token.
+export async function authenticatedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  await ensureFreshSession();
+  const seenExpiresAt = getSessionExpiresAt();
+  const url = proxyUrl(path);
+  const response = await fetch(url, init);
+  if (response.status !== 401) return response;
+
+  await refreshBackendSession(seenExpiresAt);
+  return fetch(url, init);
 }
 
-export async function authenticatedFetch(
-  input: RequestInfo | URL,
-  init: RequestInit = {},
-): Promise<Response> {
-  const token = await currentAccessToken();
-  const request = makeRequest(input, init, token);
-  const response = await fetch(request.url, request.init);
+export async function sessionRequest(path: string, body?: unknown): Promise<Response> {
+  return fetch(path, {
+    method: "POST",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
 
-  if (response.status !== 401 || isRequest(input)) return response;
+export async function requestRealtimeTicket(): Promise<{ brokerURL: string; ticket: string }> {
+  await ensureFreshSession();
+  const seenExpiresAt = getSessionExpiresAt();
+  const response = await sessionRequest("/api/session/ws-ticket");
+  if (response.status !== 401) return expectBackendJson(response);
 
-  const latestToken = getAccessToken();
-  if (latestToken && latestToken !== token) {
-    const retry = makeRequest(input, init, latestToken);
-    return fetch(retry.url, retry.init);
-  }
-
-  const refreshed = await refreshBackendSession();
-  const retry = makeRequest(input, init, refreshed.accessToken);
-  return fetch(retry.url, retry.init);
+  await refreshBackendSession(seenExpiresAt);
+  return expectBackendJson(await sessionRequest("/api/session/ws-ticket"));
 }

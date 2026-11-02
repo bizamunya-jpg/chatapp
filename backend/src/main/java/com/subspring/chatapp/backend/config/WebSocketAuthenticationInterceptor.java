@@ -6,6 +6,7 @@ import com.subspring.chatapp.backend.repositories.CallRepository;
 import com.subspring.chatapp.backend.repositories.CallParticipantRepository;
 import com.subspring.chatapp.backend.repositories.ConversationParticipantRepository;
 import com.subspring.chatapp.backend.repositories.RoomRepository;
+import com.subspring.chatapp.backend.services.WebSocketTicketService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -23,25 +24,29 @@ import org.springframework.stereotype.Component;
 public class WebSocketAuthenticationInterceptor implements ChannelInterceptor {
     private static final String ROOM_TOPIC_PREFIX = "/topic/room/";
     private static final String SEND_DESTINATION_PREFIX = "/app/sendMessage/";
+    private static final String TICKET_HEADER = "ws-ticket";
 
     private final JwtDecoder jwtDecoder;
     private final ConversationParticipantRepository participantRepository;
     private final RoomRepository roomRepository;
     private final CallRepository callRepository;
     private final CallParticipantRepository callParticipantRepository;
+    private final WebSocketTicketService webSocketTicketService;
 
     public WebSocketAuthenticationInterceptor(
             JwtDecoder jwtDecoder,
             ConversationParticipantRepository participantRepository,
             RoomRepository roomRepository,
             CallRepository callRepository,
-            CallParticipantRepository callParticipantRepository
+            CallParticipantRepository callParticipantRepository,
+            WebSocketTicketService webSocketTicketService
     ) {
         this.jwtDecoder = jwtDecoder;
         this.participantRepository = participantRepository;
         this.roomRepository = roomRepository;
         this.callRepository = callRepository;
         this.callParticipantRepository = callParticipantRepository;
+        this.webSocketTicketService = webSocketTicketService;
     }
 
     @Override
@@ -82,6 +87,13 @@ public class WebSocketAuthenticationInterceptor implements ChannelInterceptor {
     }
 
     private void authenticate(StompHeaderAccessor accessor) {
+        List<String> tickets = accessor.getNativeHeader(TICKET_HEADER);
+        if (tickets != null && !tickets.isEmpty()) {
+            Jwt jwt = webSocketTicketService.consume(tickets.get(0))
+                    .orElseThrow(() -> new MessagingException("The realtime ticket is invalid or expired."));
+            accessor.setUser(new JwtAuthenticationToken(jwt));
+            return;
+        }
         List<String> values = accessor.getNativeHeader(HttpHeaders.AUTHORIZATION);
         if (values == null || values.isEmpty() || !values.get(0).startsWith("Bearer ")) {
             throw new MessagingException("A bearer access token is required.");

@@ -1,24 +1,18 @@
+import type { Client } from "@stomp/stompjs";
+
 import {
   authenticatedFetch,
-  backendFetch,
   expectBackendJson,
   expectBackendSuccess,
-  getAuthenticatedAccessToken,
-  getBackendWebSocketUrl,
-  refreshBackendSession,
+  requestRealtimeTicket,
+  sessionRequest,
 } from "@/lib/api-client";
 import {
-  clearAuthTokens,
-  storeAuthTokens,
-} from "@/lib/auth-token";
-import {
-  AuthResponseSchema,
   LoginSchema,
   RegisterSchema,
 } from "@/lib/auth-schemas";
 import type {
   Attachment,
-  AuthResponse,
   Call,
   CallParticipant,
   Conversation,
@@ -35,7 +29,6 @@ import type {
 type RequestOptions = {
   method?: string;
   body?: unknown;
-  authenticated?: boolean;
 };
 
 async function requestJson<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -46,8 +39,7 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
     init.body = JSON.stringify(options.body);
   }
 
-  const fetcher = options.authenticated === false ? backendFetch : authenticatedFetch;
-  return expectBackendJson<T>(await fetcher(path, init));
+  return expectBackendJson<T>(await authenticatedFetch(path, init));
 }
 
 async function requestVoid(path: string, options: RequestOptions = {}): Promise<void> {
@@ -58,13 +50,7 @@ async function requestVoid(path: string, options: RequestOptions = {}): Promise<
     init.body = JSON.stringify(options.body);
   }
 
-  const fetcher = options.authenticated === false ? backendFetch : authenticatedFetch;
-  await expectBackendSuccess(await fetcher(path, init));
-}
-
-function installAuthentication(response: AuthResponse): AuthResponse {
-  storeAuthTokens(response);
-  return response;
+  await expectBackendSuccess(await authenticatedFetch(path, init));
 }
 
 export const backendApi = {
@@ -74,37 +60,18 @@ export const backendApi = {
       email: string;
       password: string;
       displayName?: string;
-    }): Promise<AuthResponse> {
+    }): Promise<void> {
       const validatedInput = RegisterSchema.omit({ confirmPassword: true }).parse(input);
-      const response = await requestJson<unknown>("/api/v1/auth/register", {
-        method: "POST",
-        body: validatedInput,
-        authenticated: false,
-      });
-      return installAuthentication(AuthResponseSchema.parse(response));
+      await expectBackendSuccess(await sessionRequest("/api/session/register", validatedInput));
     },
 
-    async login(input: { username: string; password: string }): Promise<AuthResponse> {
+    async login(input: { username: string; password: string }): Promise<void> {
       const validatedInput = LoginSchema.parse(input);
-      const response = await requestJson<unknown>("/api/v1/auth/login", {
-        method: "POST",
-        body: validatedInput,
-        authenticated: false,
-      });
-      return installAuthentication(AuthResponseSchema.parse(response));
+      await expectBackendSuccess(await sessionRequest("/api/session/login", validatedInput));
     },
-
-    refresh: refreshBackendSession,
 
     async logout(): Promise<void> {
-      try {
-        await requestVoid("/api/v1/auth/logout", {
-          method: "POST",
-          body: { refreshToken: getStoredRefreshToken() },
-        });
-      } finally {
-        clearAuthTokens();
-      }
+      await expectBackendSuccess(await sessionRequest("/api/session/logout"));
     },
   },
 
@@ -368,15 +335,37 @@ export const backendApi = {
   realtime: {
     async connectionOptions(): Promise<{
       brokerURL: string;
-      connectHeaders: { Authorization: string };
+      beforeConnect: (client: Client) => Promise<void>;
       reconnectDelay: number;
     }> {
-      const token = await getAuthenticatedAccessToken();
+      const { brokerURL, ticket } = await requestRealtimeTicket();
+      let unusedTicket: string | null = ticket;
       return {
-        brokerURL: getBackendWebSocketUrl(),
-        connectHeaders: { Authorization: `Bearer ${token}` },
+        brokerURL,
+        // Tickets are single-use, so each reconnect needs a new one.
+        beforeConnect: async (client) => {
+          let nextTicket = unusedTicket;
+          unusedTicket = null;
+          if (!nextTicket) {
+            nextTicket = await requestRealtimeTicket()
+              .then((response) => response.ticket)
+              .catch(() => null);
+          }
+          // Without a ticket the broker rejects this attempt and the client retries.
+          client.connectHeaders = nextTicket ? { "ws-ticket": nextTicket } : {};
+        },
         reconnectDelay: 5000,
       };
+    },
+
+    async iceServers(): Promise<RTCIceServer[]> {
+      try {
+        const response = await sessionRequest("/api/session/ice-servers");
+        return (await expectBackendJson<{ iceServers: RTCIceServer[] }>(response)).iceServers;
+      } catch {
+        // Many calls connect without a relay, so a failed lookup should not stop the call.
+        return [{ urls: "stun:stun.l.google.com:19302" }];
+      }
     },
 
     roomMessagesDestination(conversationId: string): string {
@@ -396,12 +385,3 @@ export const backendApi = {
     },
   },
 };
-
-function getStoredRefreshToken(): string {
-  if (typeof window === "undefined") {
-    throw new Error("Authentication is only available in the browser.");
-  }
-  const token = window.sessionStorage.getItem("chatapp.refreshToken");
-  if (!token) throw new Error("No refresh token is stored. Please log in first.");
-  return token;
-}

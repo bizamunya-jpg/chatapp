@@ -170,6 +170,7 @@ require an access token sent using the HTTP bearer-token authorization scheme.
 | `POST` | `/api/v1/auth/login` | Login with `username` and password |
 | `POST` | `/api/v1/auth/refresh` | Rotate refresh token and issue new tokens |
 | `POST` | `/api/v1/auth/logout` | Revoke refresh token |
+| `POST` | `/api/v1/auth/ws-ticket` | Issue a single-use, 60-second WebSocket ticket for the STOMP `ws-ticket` CONNECT header |
 | `GET`, `PATCH` | `/api/v1/users/me` | Read or update the signed-in profile |
 | `POST`, `DELETE` | `/api/v1/users/me/avatar` | Upload or remove the signed-in user's profile image |
 | `GET` | `/api/v1/users/{userId}/avatar` | Read a user's optional profile image |

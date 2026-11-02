@@ -156,7 +156,7 @@ export function DirectCall({ conversationId }: Props) {
         if (!active) return;
         client = new Client({
           brokerURL: options.brokerURL,
-          connectHeaders: options.connectHeaders,
+          beforeConnect: options.beforeConnect,
           reconnectDelay: options.reconnectDelay,
           onConnect: () => {
             setIsConnected(true);
@@ -234,6 +234,7 @@ export function DirectCall({ conversationId }: Props) {
     pendingCandidatesRef.current = [];
     void (async () => {
       try {
+        const iceServers = await backendApi.realtime.iceServers();
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         if (!active) {
           stream.getTracks().forEach((track) => track.stop());
@@ -244,9 +245,7 @@ export function DirectCall({ conversationId }: Props) {
         stream.getAudioTracks().forEach((track) => {
           track.enabled = !isMutedRef.current;
         });
-        const peer = new RTCPeerConnection({
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-        });
+        const peer = new RTCPeerConnection({ iceServers });
         activePeer = peer;
         peerRef.current = peer;
         stream.getTracks().forEach((track) => peer.addTrack(track, stream));

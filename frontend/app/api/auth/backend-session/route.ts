@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { AuthResponseSchema } from "@/lib/auth-schemas";
 import { getBackendBaseUrl } from "@/lib/backend-url";
+import { forbiddenOriginResponse, isSameOriginRequest, writeSession } from "@/lib/server-session";
 
 const OAuthSessionSchema = z.object({
   oauthProvider: z.enum(["google", "github"]),
@@ -13,9 +14,7 @@ const OAuthSessionSchema = z.object({
 const BackendErrorSchema = z.object({ error: z.string() });
 
 export async function POST(request: NextRequest) {
-  if (request.headers.get("origin") !== request.nextUrl.origin) {
-    return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
-  }
+  if (!isSameOriginRequest(request)) return forbiddenOriginResponse();
   if (!process.env.NEXTAUTH_SECRET) {
     return NextResponse.json(
       { error: "OAuth session signing is not configured on the frontend." },
@@ -69,7 +68,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  return NextResponse.json(parsedResponse.data, {
+  await writeSession(parsedResponse.data);
+  return NextResponse.json({ user: parsedResponse.data.user }, {
     headers: { "Cache-Control": "no-store" },
   });
 }
