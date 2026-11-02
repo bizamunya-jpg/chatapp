@@ -12,6 +12,7 @@ import { getAccessToken } from "@/lib/auth-token";
 import { backendApi } from "@/lib/backend-api";
 import type { Conversation, RoomParticipant, RoomSummary, PublicUserProfile, UserProfile } from "@/lib/backend-types";
 import { ProfileImageSchema, UserSearchSchema } from "@/lib/page-schemas";
+import { onRoomsChanged } from "@/lib/room-events";
 
 function displayConversation(conversation: Conversation): string {
   return conversation.title?.trim() || (conversation.type === "DIRECT" ? "Direct conversation" : "Untitled room");
@@ -84,6 +85,8 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
         setIsLoading(false);
       });
   }, [pathname]);
+
+  useEffect(() => onRoomsChanged(() => void refreshLists()), [refreshLists]);
 
   async function searchPeople(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

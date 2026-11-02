@@ -1,5 +1,6 @@
 package com.subspring.chatapp.backend.config;
 
+import com.subspring.chatapp.backend.repositories.CallParticipantRepository;
 import com.subspring.chatapp.backend.repositories.CallRepository;
 import com.subspring.chatapp.backend.repositories.ConversationParticipantRepository;
 import com.subspring.chatapp.backend.repositories.RoomRepository;
@@ -34,7 +35,8 @@ class WebSocketAuthenticationInterceptorTests {
                 jwtDecoder,
                 mock(ConversationParticipantRepository.class),
                 mock(RoomRepository.class),
-                mock(CallRepository.class)
+                mock(CallRepository.class),
+                mock(CallParticipantRepository.class)
         );
         StompHeaderAccessor headers = StompHeaderAccessor.create(StompCommand.CONNECT);
         headers.addNativeHeader("Authorization", "Bearer valid-token");
@@ -56,7 +58,8 @@ class WebSocketAuthenticationInterceptorTests {
                 mock(JwtDecoder.class),
                 mock(ConversationParticipantRepository.class),
                 mock(RoomRepository.class),
-                mock(CallRepository.class)
+                mock(CallRepository.class),
+                mock(CallParticipantRepository.class)
         );
         StompHeaderAccessor headers = StompHeaderAccessor.create(StompCommand.CONNECT);
         headers.setLeaveMutable(true);
