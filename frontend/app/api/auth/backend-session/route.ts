@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { AuthResponseSchema } from "@/lib/auth-schemas";
+import { getBackendBaseUrl } from "@/lib/backend-url";
 
 const OAuthSessionSchema = z.object({
   oauthProvider: z.enum(["google", "github"]),
@@ -10,18 +11,6 @@ const OAuthSessionSchema = z.object({
 });
 
 const BackendErrorSchema = z.object({ error: z.string() });
-
-function getBackendUrl(): URL {
-  const configuredUrl =
-    process.env.BACKEND_URL ??
-    process.env.NEXT_PUBLIC_BACKEND_URL ??
-    "http://localhost:8080";
-  const url = new URL(configuredUrl);
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("BACKEND_URL must use HTTP or HTTPS.");
-  }
-  return url;
-}
 
 export async function POST(request: NextRequest) {
   if (request.headers.get("origin") !== request.nextUrl.origin) {
@@ -45,7 +34,7 @@ export async function POST(request: NextRequest) {
 
   let response: Response;
   try {
-    response = await fetch(new URL("/api/v1/auth/oauth/exchange", getBackendUrl()), {
+    response = await fetch(new URL("/api/v1/auth/oauth/exchange", getBackendBaseUrl()), {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({

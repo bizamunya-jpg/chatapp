@@ -5,8 +5,8 @@ import {
   getRefreshToken,
   storeAuthTokens,
 } from "@/lib/auth-token";
+import { getBackendBaseUrl } from "@/lib/backend-url";
 
-const DEFAULT_BACKEND_URL = "http://localhost:8080";
 const REFRESH_BEFORE_EXPIRY_MS = 30_000;
 
 export type BackendAuthTokens = {
@@ -28,20 +28,6 @@ export class BackendApiError extends Error {
 }
 
 let refreshInProgress: Promise<BackendAuthTokens> | null = null;
-
-export function getBackendBaseUrl(): string {
-  const configuredUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? DEFAULT_BACKEND_URL;
-  let url: URL;
-  try {
-    url = new URL(configuredUrl);
-  } catch {
-    throw new Error("NEXT_PUBLIC_BACKEND_URL must be an absolute HTTP(S) URL.");
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("NEXT_PUBLIC_BACKEND_URL must use HTTP or HTTPS.");
-  }
-  return url.toString().replace(/\/+$/, "");
-}
 
 export function backendUrl(path: string): URL {
   return new URL(path.replace(/^\/+/, ""), `${getBackendBaseUrl()}/`);
