@@ -1,7 +1,7 @@
 "use client";
 
 import { Client, type IMessage, type StompSubscription } from "@stomp/stompjs";
-import { Phone, PhoneOff } from "lucide-react";
+import { Mic, MicOff, Phone, PhoneOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
@@ -41,6 +41,8 @@ export function DirectCall({ conversationId }: Props) {
   const [isUpdating, setIsUpdating] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isCallConnected, setIsCallConnected] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const isMutedRef = useRef(false);
   const clientRef = useRef<Client | null>(null);
   const signalSubscriptionRef = useRef<StompSubscription | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -239,6 +241,9 @@ export function DirectCall({ conversationId }: Props) {
         }
         activeStream = stream;
         localStreamRef.current = stream;
+        stream.getAudioTracks().forEach((track) => {
+          track.enabled = !isMutedRef.current;
+        });
         const peer = new RTCPeerConnection({
           iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
         });
@@ -298,6 +303,25 @@ export function DirectCall({ conversationId }: Props) {
   useEffect(() => {
     callRef.current = call;
   }, [call]);
+
+  const isInCall = call?.status === "ACCEPTED";
+
+  const [wasInCall, setWasInCall] = useState(isInCall);
+  if (wasInCall !== isInCall) {
+    setWasInCall(isInCall);
+    if (!isInCall) setIsMuted(false);
+  }
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+    localStreamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = !isMuted;
+    });
+  }, [isMuted]);
+
+  function toggleMute() {
+    setIsMuted((current) => !current);
+  }
 
   async function startCall() {
     setError("");
@@ -376,6 +400,19 @@ export function DirectCall({ conversationId }: Props) {
                 Decline
               </Button>
             </>
+          )}
+          {isInCall && (
+            <Button
+              type="button"
+              aria-pressed={isMuted}
+              onClick={toggleMute}
+              className={isMuted
+                ? "h-9 bg-amber-400 text-black hover:bg-amber-300"
+                : "h-9 bg-white text-black hover:bg-zinc-200"}
+            >
+              {isMuted ? <MicOff className="mr-2 size-4" /> : <Mic className="mr-2 size-4" />}
+              {isMuted ? "Unmute" : "Mute"}
+            </Button>
           )}
           <Button
             type="button"

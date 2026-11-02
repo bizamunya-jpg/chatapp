@@ -1,7 +1,7 @@
 "use client";
 
 import { Client, type IMessage, type StompSubscription } from "@stomp/stompjs";
-import { Phone, PhoneOff } from "lucide-react";
+import { Mic, MicOff, Phone, PhoneOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
@@ -34,6 +34,8 @@ export function GroupCall({ conversationId }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const isMutedRef = useRef(false);
   const clientRef = useRef<Client | null>(null);
   const eventsSubscriptionRef = useRef<StompSubscription | null>(null);
   const signalSubscriptionRef = useRef<StompSubscription | null>(null);
@@ -296,6 +298,9 @@ export function GroupCall({ conversationId }: Props) {
             stream.getTracks().forEach((track) => track.stop());
             return;
           }
+          stream.getAudioTracks().forEach((track) => {
+            track.enabled = !isMutedRef.current;
+          });
           localStreamRef.current = stream;
         }
         const joinedUsers = participants
@@ -345,6 +350,26 @@ export function GroupCall({ conversationId }: Props) {
     localStreamRef.current = null;
   }, [call]);
 
+  const ownStatus = participants.find((participant) => participant.userId === userId)?.status;
+  const isInCall = ownStatus === "ACCEPTED";
+
+  const [wasInCall, setWasInCall] = useState(isInCall);
+  if (wasInCall !== isInCall) {
+    setWasInCall(isInCall);
+    if (!isInCall) setIsMuted(false);
+  }
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+    localStreamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = !isMuted;
+    });
+  }, [isMuted]);
+
+  function toggleMute() {
+    setIsMuted((current) => !current);
+  }
+
   async function startCall() {
     setError("");
     setIsUpdating(true);
@@ -375,9 +400,8 @@ export function GroupCall({ conversationId }: Props) {
     }
   }
 
-  const ownStatus = participants.find((participant) => participant.userId === userId)?.status;
   const isInitiator = call?.initiatorId === userId;
-  const activeRemoteStreams = ownStatus === "ACCEPTED" ? Object.entries(remoteStreams) : [];
+  const activeRemoteStreams = isInCall ? Object.entries(remoteStreams) : [];
   const connectedCount = activeRemoteStreams.length;
   const audioRef = (stream: MediaStream) => (element: HTMLAudioElement | null) => {
     if (element && element.srcObject !== stream) {
@@ -426,17 +450,30 @@ export function GroupCall({ conversationId }: Props) {
               </Button>
             </>
           )}
-          {ownStatus === "ACCEPTED" && (
-            <Button
-              type="button"
-              disabled={isUpdating}
-              onClick={() => void updateCall("ENDED")}
-              variant="outline"
-              className="h-9 border-red-500/30 text-red-200 hover:bg-red-950/50 hover:text-white"
-            >
-              <PhoneOff className="mr-2 size-4" />
-              {isInitiator ? "End group call" : "Leave call"}
-            </Button>
+          {isInCall && (
+            <>
+              <Button
+                type="button"
+                aria-pressed={isMuted}
+                onClick={toggleMute}
+                className={isMuted
+                  ? "h-9 bg-amber-400 text-black hover:bg-amber-300"
+                  : "h-9 bg-white text-black hover:bg-zinc-200"}
+              >
+                {isMuted ? <MicOff className="mr-2 size-4" /> : <Mic className="mr-2 size-4" />}
+                {isMuted ? "Unmute" : "Mute"}
+              </Button>
+              <Button
+                type="button"
+                disabled={isUpdating}
+                onClick={() => void updateCall("ENDED")}
+                variant="outline"
+                className="h-9 border-red-500/30 text-red-200 hover:bg-red-950/50 hover:text-white"
+              >
+                <PhoneOff className="mr-2 size-4" />
+                {isInitiator ? "End group call" : "Leave call"}
+              </Button>
+            </>
           )}
         </>
       )}
