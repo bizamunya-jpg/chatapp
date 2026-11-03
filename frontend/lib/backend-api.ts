@@ -20,6 +20,7 @@ import type {
   PublicUserProfile,
   RoomInvitation,
   RoomJoinRequest,
+  RoomJoinRequestProfile,
   RoomParticipant,
   RoomRole,
   RoomSummary,
@@ -230,7 +231,7 @@ export const backendApi = {
       );
     },
 
-    listJoinRequests(roomId: string): Promise<RoomJoinRequest[]> {
+    listJoinRequests(roomId: string): Promise<RoomJoinRequestProfile[]> {
       return requestJson(
         `/api/v1/room/${encodeURIComponent(roomId)}/join-requests`,
       );

@@ -289,6 +289,16 @@ class BackendApplicationTests {
 		mockMvc.perform(get("/api/v1/conversations/{conversationId}/messages", roomId)
 						.header("Authorization", "Bearer " + requesterToken))
 				.andExpect(status().isForbidden());
+		mockMvc.perform(get("/api/v1/room/{roomId}/join-requests", roomId)
+						.header("Authorization", "Bearer " + ownerToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].id").value(joinRequestId))
+				.andExpect(jsonPath("$[0].userId").value(requester.get("user").get("id").asText()))
+				.andExpect(jsonPath("$[0].username").value(requester.get("user").get("username").asText()))
+				.andExpect(jsonPath("$[0].status").value("PENDING"));
+		mockMvc.perform(get("/api/v1/room/{roomId}/join-requests", roomId)
+						.header("Authorization", "Bearer " + requesterToken))
+				.andExpect(status().isForbidden());
 
 		mockMvc.perform(patch("/api/v1/room/{roomId}/join-requests/{requestId}", roomId, joinRequestId)
 						.header("Authorization", "Bearer " + ownerToken)
@@ -298,6 +308,10 @@ class BackendApplicationTests {
 								"""))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("APPROVED"));
+		mockMvc.perform(get("/api/v1/room/{roomId}/join-requests", roomId)
+						.header("Authorization", "Bearer " + ownerToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$").isEmpty());
 		assertEquals(
 				com.subspring.chatapp.backend.entities.RoomRole.PARTICIPANT,
 				participantRepository.findById(new ConversationParticipantId(

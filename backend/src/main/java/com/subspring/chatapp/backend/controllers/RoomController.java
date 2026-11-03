@@ -9,6 +9,7 @@ import com.subspring.chatapp.backend.dto.AddParticipantRequest;
 import com.subspring.chatapp.backend.dto.CreateRoomRequest;
 import com.subspring.chatapp.backend.dto.JoinRoomDecisionRequest;
 import com.subspring.chatapp.backend.dto.RoomInvitationDecisionRequest;
+import com.subspring.chatapp.backend.dto.RoomJoinRequestProfile;
 import com.subspring.chatapp.backend.dto.RoomSummary;
 import com.subspring.chatapp.backend.dto.RoomParticipantProfile;
 import com.subspring.chatapp.backend.dto.UserProfile;
@@ -250,7 +251,23 @@ public class RoomController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Only room admins can review join requests."));
         }
-        return ResponseEntity.ok(joinRequestRepository.findByRoomIdAndStatusOrderByCreatedAtAsc(roomId, "PENDING"));
+        List<RoomJoinRequestProfile> requests = joinRequestRepository
+                .findByRoomIdAndStatusOrderByCreatedAtAsc(roomId, "PENDING").stream()
+                .map(request -> userRepository.findById(request.getUserId())
+                        .map(user -> new RoomJoinRequestProfile(
+                                request.getId(),
+                                request.getRoomId(),
+                                user.getId(),
+                                user.getUsername(),
+                                user.getName(),
+                                UserProfile.avatarUrl(user),
+                                request.getStatus(),
+                                request.getCreatedAt()
+                        ))
+                        .orElse(null))
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        return ResponseEntity.ok(requests);
     }
 
     @PatchMapping("/api/v1/room/{roomId}/join-requests/{requestId}")

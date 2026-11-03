@@ -10,7 +10,7 @@ import { ProfileAvatar } from "@/components/profile/profile-avatar";
 import { BackendApiError } from "@/lib/api-client";
 import { hasSession } from "@/lib/session-state";
 import { backendApi } from "@/lib/backend-api";
-import type { RoomJoinRequest, RoomParticipant, RoomSummary } from "@/lib/backend-types";
+import type { RoomJoinRequest, RoomJoinRequestProfile, RoomParticipant, RoomSummary } from "@/lib/backend-types";
 import { CreateRoomSchema } from "@/lib/page-schemas";
 import { notifyRoomsChanged } from "@/lib/room-events";
 
@@ -129,6 +129,12 @@ function RoomsPageContent() {
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [isCreating, setIsCreating] = useState(false);
     const [joiningRoomId, setJoiningRoomId] = useState("");
+    const [currentUserId, setCurrentUserId] = useState("");
+    const [viewingRequestsRoomId, setViewingRequestsRoomId] = useState("");
+    const [joinRequests, setJoinRequests] = useState<RoomJoinRequestProfile[]>([]);
+    const [joinRequestsRoomId, setJoinRequestsRoomId] = useState("");
+    const [joinRequestsError, setJoinRequestsError] = useState("");
+    const [decidingRequestId, setDecidingRequestId] = useState("");
     const dialogRef = useRef<HTMLElement>(null);
 
     const fetchRooms = useCallback(async () => {
@@ -226,6 +232,24 @@ function RoomsPageContent() {
     }, [memberRoomId]);
 
     useEffect(() => {
+        if (!memberRoomId || currentUserId) return;
+        let active = true;
+        // Without the current user the admin-only request controls stay hidden.
+        void backendApi.users.me()
+            .then((user) => {
+                if (active) setCurrentUserId(user.id);
+            })
+            .catch(() => undefined);
+        return () => {
+            active = false;
+        };
+    }, [currentUserId, memberRoomId]);
+
+    const selectedRoomIsAdmin = Boolean(selectedRoom) && participantsRoomId === selectedRoom?.id
+        && participants.some((participant) => participant.id === currentUserId && participant.role === "ADMIN");
+    const isViewingRequests = Boolean(selectedRoom) && viewingRequestsRoomId === selectedRoom?.id;
+
+    useEffect(() => {
         if (!isDialogOpen) return;
         const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         dialogRef.current?.focus();
@@ -321,6 +345,51 @@ function RoomsPageContent() {
             setError(messageFrom(joinError));
         } finally {
             setJoiningRoomId("");
+        }
+    }
+
+    async function toggleJoinRequests(roomId: string) {
+        if (viewingRequestsRoomId === roomId) {
+            setViewingRequestsRoomId("");
+            return;
+        }
+        setError("");
+        setNotice("");
+        setViewingRequestsRoomId(roomId);
+        setJoinRequestsRoomId("");
+        try {
+            setJoinRequests(await backendApi.rooms.listJoinRequests(roomId));
+            setJoinRequestsError("");
+        } catch (loadError) {
+            setJoinRequests([]);
+            setJoinRequestsError(messageFrom(loadError));
+        } finally {
+            setJoinRequestsRoomId(roomId);
+        }
+    }
+
+    async function decideJoinRequest(request: RoomJoinRequestProfile, approved: boolean) {
+        const name = request.displayName || request.username || "This user";
+        setError("");
+        setNotice("");
+        setDecidingRequestId(request.id);
+        try {
+            await backendApi.rooms.decideJoinRequest(request.roomId, request.id, approved);
+            setJoinRequests((current) => current.filter((entry) => entry.id !== request.id));
+            setNotice(approved ? `${name} has joined the room.` : `${name}’s request was denied.`);
+            if (approved) {
+                // The member list is secondary here, so a failed reload keeps the old list.
+                const updated = await backendApi.rooms.listParticipants(request.roomId).catch(() => null);
+                if (updated) setParticipants(updated);
+            }
+        } catch (decideError) {
+            // Another admin may have already handled it, so it no longer belongs in the list.
+            if (decideError instanceof BackendApiError && decideError.status === 409) {
+                setJoinRequests((current) => current.filter((entry) => entry.id !== request.id));
+            }
+            setError(messageFrom(decideError));
+        } finally {
+            setDecidingRequestId("");
         }
     }
 
@@ -469,6 +538,71 @@ function RoomsPageContent() {
                             {selectedRoomIsMember ? (
                                 <>
                                     <p className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">You are a member of this room.</p>
+                                    {selectedRoomIsAdmin && (
+                                        <section className="mt-5">
+                                            <Button
+                                                type="button"
+                                                aria-expanded={isViewingRequests}
+                                                aria-controls="room-join-requests"
+                                                onClick={() => void toggleJoinRequests(selectedRoom.id)}
+                                                className="border border-white/15 bg-white/5 text-white hover:bg-white/10"
+                                            >
+                                                {isViewingRequests ? "Hide requests" : "View requests"}
+                                            </Button>
+                                            {isViewingRequests && (
+                                                <div id="room-join-requests" className="mt-3">
+                                                    <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Join requests</h3>
+                                                    {joinRequestsRoomId !== selectedRoom.id ? (
+                                                        <p className="mt-3 text-sm text-zinc-500">Loading join requests…</p>
+                                                    ) : joinRequestsError ? (
+                                                        <p role="alert" className="mt-3 text-sm text-red-300">{joinRequestsError}</p>
+                                                    ) : joinRequests.length === 0 ? (
+                                                        <p className="mt-3 text-sm text-zinc-500">No pending requests.</p>
+                                                    ) : (
+                                                        <ul className="mt-3 space-y-2">
+                                                            {joinRequests.map((request) => {
+                                                                const name = request.displayName || request.username || "ChatApp user";
+                                                                const isDeciding = decidingRequestId === request.id;
+                                                                return (
+                                                                    <li key={request.id} className="flex flex-wrap items-center gap-3 rounded-lg bg-white/[0.03] p-2">
+                                                                        <ProfileAvatar avatarUrl={request.avatarUrl} label={name} className="size-9" />
+                                                                        <span className="min-w-0 flex-1">
+                                                                            <span className="block truncate text-sm text-white">{name}</span>
+                                                                            <span className="block truncate text-xs text-zinc-500">
+                                                                                @{request.username || "no username"} · {new Date(request.createdAt).toLocaleDateString()}
+                                                                            </span>
+                                                                        </span>
+                                                                        <span className="flex shrink-0 gap-2">
+                                                                            <Button
+                                                                                type="button"
+                                                                                size="sm"
+                                                                                disabled={Boolean(decidingRequestId)}
+                                                                                onClick={() => void decideJoinRequest(request, true)}
+                                                                                aria-label={`Accept ${name}`}
+                                                                                className="bg-emerald-700 text-white hover:bg-emerald-600"
+                                                                            >
+                                                                                {isDeciding ? "Saving…" : "Accept"}
+                                                                            </Button>
+                                                                            <Button
+                                                                                type="button"
+                                                                                size="sm"
+                                                                                disabled={Boolean(decidingRequestId)}
+                                                                                onClick={() => void decideJoinRequest(request, false)}
+                                                                                aria-label={`Deny ${name}`}
+                                                                                className="border border-red-500/30 bg-red-950/60 text-red-100 hover:bg-red-900/60"
+                                                                            >
+                                                                                Deny
+                                                                            </Button>
+                                                                        </span>
+                                                                    </li>
+                                                                );
+                                                            })}
+                                                        </ul>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </section>
+                                    )}
                                     <h3 className="mt-5 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Members</h3>
                                     {participantsRoomId !== selectedRoom.id ? (
                                         <p className="mt-3 text-sm text-zinc-500">Loading room members…</p>

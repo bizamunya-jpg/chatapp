@@ -10,7 +10,11 @@ import {
 const STUN_SERVER: RTCIceServer = { urls: "stun:stun.l.google.com:19302" };
 
 function turnServer(): RTCIceServer | null {
-  const urls = process.env.TURN_URLS?.split(",").map((url) => url.trim()).filter(Boolean);
+  const urls = process.env.TURN_URLS?.split(",")
+    .map((url) => url.trim())
+    .filter(Boolean)
+    // Providers often list a bare host:port, which RTCPeerConnection rejects and fails the call.
+    .map((url) => (/^(stuns?|turns?):/.test(url) ? url : `turn:${url}`));
   const username = process.env.TURN_USERNAME;
   const credential = process.env.TURN_PASSWORD;
   if (!urls?.length || !username || !credential) return null;
