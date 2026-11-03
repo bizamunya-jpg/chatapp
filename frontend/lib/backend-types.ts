@@ -67,6 +67,17 @@ export type RoomJoinRequest = {
   resolvedAt: string | null;
 };
 
+export type RoomJoinRequestProfile = {
+  id: string;
+  roomId: string;
+  userId: string;
+  username: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  status: RoomJoinRequest["status"];
+  createdAt: string;
+};
+
 export type RoomInvitation = {
   id: string;
   roomId: string;
